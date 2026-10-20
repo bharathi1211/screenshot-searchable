@@ -2,6 +2,7 @@ import type { ScreenshotItem } from '../types'
 import type { RangeTuple } from 'fuse.js'
 import { useState } from 'react'
 import { ImageDialog } from './ImageDialog'
+import { RenameControl } from './RenameControl'
 import { TextSnippet } from './TextSnippet'
 
 interface ScreenshotGridProps {
@@ -12,6 +13,7 @@ interface ScreenshotGridProps {
   query: string
   textMatchesById: ReadonlyMap<string, ReadonlyArray<RangeTuple>>
   onRemove: (id: string) => void
+  onRename: (id: string, name: string) => Promise<boolean>
   onRetry: (id: string) => void
   onClearAll: () => void
   isClearing: boolean
@@ -25,6 +27,7 @@ export function ScreenshotGrid({
   query,
   textMatchesById,
   onRemove,
+  onRename,
   onRetry,
   onClearAll,
   isClearing,
@@ -114,9 +117,15 @@ export function ScreenshotGrid({
                     <span aria-hidden="true">×</span>
                   </button>
                 </div>
-                <p className="file-name" title={item.name}>
-                  {item.name}
-                </p>
+                <div className="file-name-row">
+                  <p className="file-name" title={item.name}>
+                    {item.name}
+                  </p>
+                  <RenameControl
+                    name={item.name}
+                    onRename={(name) => onRename(item.id, name)}
+                  />
+                </div>
                 <span className={`status-badge status-${item.status}`}>
                   {item.status === 'processing'
                     ? 'Processing OCR'
@@ -180,6 +189,7 @@ export function ScreenshotGrid({
           item={
             items.find((item) => item.id === selectedItem.id) ?? selectedItem
           }
+          onRename={(name) => onRename(selectedItem.id, name)}
           onClose={() => setSelectedItem(null)}
         />
       )}

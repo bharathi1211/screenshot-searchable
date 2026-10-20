@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { SearchBar } from './components/SearchBar'
 import { ScreenshotGrid } from './components/ScreenshotGrid'
+import { OfflineStatus } from './components/OfflineStatus'
+import { SortSelect, type SortOption } from './components/SortSelect'
+import { ThemeToggle } from './components/ThemeToggle'
 import { UploadZone } from './components/UploadZone'
 import { screenshotDb, toStoredScreenshot } from './lib/db'
 import { recognizeImage, terminate } from './lib/ocr'
@@ -10,9 +13,35 @@ import type { ScreenshotItem } from './types'
 
 const MAX_IMAGE_SIZE_BYTES = 15 * 1024 * 1024
 
+interface SortPreference {
+  sort: Exclude<SortOption, 'best-match'>
+  wasSaved: boolean
+}
+
+// Restore the last manual sort; a missing preference enables automatic search ranking.
+function getSortPreference(): SortPreference {
+  try {
+    const savedSort = localStorage.getItem('sort')
+    if (
+      savedSort === 'newest' ||
+      savedSort === 'oldest' ||
+      savedSort === 'name-asc' ||
+      savedSort === 'name-desc'
+    ) {
+      return { sort: savedSort, wasSaved: true }
+    }
+  } catch (error) {
+    console.warn('Could not read the saved sort preference.', error)
+  }
+
+  return { sort: 'newest', wasSaved: false }
+}
+
 function App() {
   const [items, setItems] = useState<ScreenshotItem[]>([])
   const [query, setQuery] = useState('')
+  const [sortPreference, setSortPreference] =
+    useState<SortPreference>(getSortPreference)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isReady, setIsReady] = useState(false)
   const [isClearing, setIsClearing] = useState(false)
@@ -26,6 +55,21 @@ function App() {
   const isMounted = useRef(false)
   const previewUrls = useRef(new Set<string>())
 
+  function changeSort(sort: SortOption) {
+    if (sort === 'best-match') {
+      // Keep the previous manual sort to restore when the search is cleared.
+      setSortPreference((current) => ({ ...current, wasSaved: false }))
+      return
+    }
+
+    setSortPreference({ sort, wasSaved: true })
+    try {
+      localStorage.setItem('sort', sort)
+    } catch (error) {
+      console.warn('Could not save the sort preference.', error)
+    }
+  }
+
   // Keep state and its synchronous queue snapshot in step.
   function updateItems(update: (current: ScreenshotItem[]) => ScreenshotItem[]) {
     const nextItems = update(itemsRef.current)
@@ -34,11 +78,21 @@ function App() {
   }
 
   function reportStorageError(action: string, error: unknown) {
+    const errorName = error instanceof Error ? error.name : ''
     const detail = error instanceof Error ? error.message : String(error)
     console.error(`Could not ${action} in browser storage.`, error)
-    setStorageError(
-      `Could not ${action} in browser storage. Your browser may have blocked local storage. ${detail}`,
-    )
+    if (
+      errorName === 'QuotaExceededError' ||
+      /quota|storage.*full|disk full/i.test(detail)
+    ) {
+      setStorageError(
+        `Could not ${action}: browser storage is full. Free space in your browser storage and try again. ${detail}`,
+      )
+    } else {
+      setStorageError(
+        `Could not ${action} in IndexedDB. IndexedDB may be unavailable or blocked by your browser. ${detail}`,
+      )
+    }
   }
 
   // Persist only the fields that belong in the database.
@@ -240,6 +294,24 @@ function App() {
     void processQueue()
   }
 
+  // Save the new name first so the UI only reflects a rename that persisted.
+  async function renameItem(id: string, name: string): Promise<boolean> {
+    try {
+      const updatedCount = await screenshotDb.screenshots.update(id, { name })
+      if (updatedCount === 0) {
+        throw new Error('This screenshot is no longer in the saved library.')
+      }
+
+      updateItems((currentItems) =>
+        currentItems.map((item) => (item.id === id ? { ...item, name } : item)),
+      )
+      return true
+    } catch (error) {
+      reportStorageError('rename this screenshot', error)
+      return false
+    }
+  }
+
   // Delete from storage before removing the card, then release its preview URL.
   async function removeItem(id: string) {
     const removedItem = itemsRef.current.find((item) => item.id === id)
@@ -372,9 +444,34 @@ function App() {
   // Empty searches show every item; active searches use fuzzy OCR/name results.
   const hasQuery = query.trim().length > 0
   const searchResults = hasQuery ? searchItems(items, query) : []
-  const visibleItems = hasQuery
+  const filteredItems = hasQuery
     ? searchResults.map((result) => result.item)
     : items
+  const currentSort: SortOption =
+    hasQuery && !sortPreference.wasSaved
+      ? 'best-match'
+      : sortPreference.sort
+  // Decorate with the original position to keep ties stable without mutating source arrays.
+  const visibleItems = filteredItems
+    .map((item, index) => ({ item, index }))
+    .sort((first, second) => {
+      let comparison = 0
+      if (currentSort === 'newest') {
+        comparison = second.item.createdAt - first.item.createdAt
+      } else if (currentSort === 'oldest') {
+        comparison = first.item.createdAt - second.item.createdAt
+      } else if (currentSort === 'name-asc') {
+        comparison = first.item.name.localeCompare(second.item.name, undefined, {
+          sensitivity: 'base',
+        })
+      } else if (currentSort === 'name-desc') {
+        comparison = second.item.name.localeCompare(first.item.name, undefined, {
+          sensitivity: 'base',
+        })
+      }
+      return comparison || first.index - second.index
+    })
+    .map(({ item }) => item)
   const processedCount = items.filter(
     (item) => item.status === 'done' || item.status === 'error',
   ).length
@@ -388,6 +485,10 @@ function App() {
   return (
     <main className="app-shell">
       <header className="page-header">
+        <div className="header-actions">
+          <OfflineStatus />
+          <ThemeToggle />
+        </div>
         <p className="eyebrow">YOUR PERSONAL IMAGE LIBRARY</p>
         <h1>Screenshot Search</h1>
         <p className="intro">
@@ -395,13 +496,25 @@ function App() {
         </p>
       </header>
 
+      <p className="offline-import-note">
+        Import screenshots here to index them before searching. This app cannot
+        scan your computer for screenshots automatically.
+      </p>
+
       {storageError && (
         <p className="storage-error" role="alert">
           {storageError}
         </p>
       )}
       <UploadZone onFilesAdded={addFiles} disabled={!isReady || isClearing} />
-      <SearchBar query={query} onQueryChange={setQuery} />
+      <div className="search-controls">
+        <SearchBar query={query} onQueryChange={setQuery} />
+        <SortSelect
+          value={currentSort}
+          hasQuery={hasQuery}
+          onChange={changeSort}
+        />
+      </div>
       <ScreenshotGrid
         items={visibleItems}
         totalItems={items.length}
@@ -410,6 +523,7 @@ function App() {
         query={query}
         textMatchesById={textMatchesById}
         onRemove={removeItem}
+        onRename={renameItem}
         onRetry={retryItem}
         onClearAll={clearAll}
         isClearing={isClearing}

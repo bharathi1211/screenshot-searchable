@@ -3,10 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Set the saved theme before styles load to avoid a flash on startup. -->
+    <script>
+      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
+      let theme = systemTheme
+
+      try {
+        const savedTheme = localStorage.getItem('theme')
+        if (savedTheme === 'light' || savedTheme === 'dark') {
+          theme = savedTheme
+        } else {
+          localStorage.setItem('theme', systemTheme)
+        }
+      } catch (error) {
+        console.warn('Could not read or save the theme preference.', error)
+      }
+
+      document.documentElement.dataset.theme = theme
+    </script>
     <meta
       name="description"
       content="Keep your screenshots together in a simple, local-first library."
     />
+    <meta name="theme-color" content="#5868d8" />
     <title>Screenshot Search</title>
   </head>
   <body>

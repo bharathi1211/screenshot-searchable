@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ScreenshotItem } from '../types'
+import { RenameControl } from './RenameControl'
 
 interface ImageDialogProps {
   item: ScreenshotItem
+  onRename: (name: string) => Promise<boolean>
   onClose: () => void
 }
 
-export function ImageDialog({ item, onClose }: ImageDialogProps) {
+export function ImageDialog({ item, onRename, onClose }: ImageDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [copyMessage, setCopyMessage] = useState('')
 
@@ -42,9 +44,12 @@ export function ImageDialog({ item, onClose }: ImageDialogProps) {
     >
       <div className="dialog-panel">
         <div className="dialog-heading">
-          <h2 id="image-dialog-title" title={item.name}>
-            {item.name}
-          </h2>
+          <div className="dialog-title-group">
+            <h2 id="image-dialog-title" title={item.name}>
+              {item.name}
+            </h2>
+            <RenameControl name={item.name} onRename={onRename} />
+          </div>
           <button
             className="icon-button dialog-close"
             type="button"
